@@ -1,8 +1,6 @@
-#!/usr/bin/python
-# pylint: disable=E0401
-# vault_namespaces_info.py - A custom module plugin for Ansible.
-# Author: Your Name (@username)
-# License: GPL-3.0-or-later
+# -*- coding: utf-8 -*-
+
+# Copyright (c) 2026 Red Hat, Inc.
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 from __future__ import absolute_import, division, print_function
@@ -10,36 +8,65 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 DOCUMENTATION = """
-    module: vault_namespace_info
-    author: Chyna Sanders (@chynasan)
-    version_added: "1.2.0"
-    short_description: A custom module plugin for Ansible.
+---
+module: vault_namespace_info
+short_description: List and read HashiCorp Vault Enterprise namespaces
+version_added: 1.2.0
+author: Chyna Sanders (@chynasan)
+description:
+  - Query Vault Enterprise namespaces via the C(/sys/namespaces) API (list or read one namespace).
+  - Omit I(path) to list all namespace paths.
+  - Set I(path) to read that namespace's C(id), C(path), and C(custom_metadata).
+  - Open Source Vault does not expose these APIs; operations will fail with an error from Vault.
+options:
+  path:
     description:
-        - Read Vault B(Enterprise) namespaces and related operations using C(/sys/namespaces).
-        - Open Source Vault does not expose these APIs; operations will fail with an error from Vault.
-        - Uses the collection's shared connection and authentication options; HTTP calls are handled by the namespaces API on the Vault client.
-      name:
-        description: The name of the namespace to retrieve information for.
-        type: str
-        required: true
+      - Namespace path to read. When omitted, lists all namespace paths.
+    type: str
+    required: false
+    aliases: [namespace_path]
+extends_documentation_fragment:
+  - hashicorp.vault.vault_auth.modules
 """
 
 EXAMPLES = """
-- name: Return a list of namespaces
+- name: List all namespace paths (register for later tasks)
   hashicorp.vault.vault_namespace_info:
     url: https://vault.example.com:8200
     token: "{{ vault_token }}"
+  register: vault_namespaces
 
+- name: Show namespace paths from registered result
+  ansible.builtin.debug:
+    msg: "{{ vault_namespaces.namespaces | map(attribute='path') | list }}"
 
+- name: Read a single namespace (id, path, and custom_metadata)
+  hashicorp.vault.vault_namespace_info:
+    url: https://vault.example.com:8200
+    token: "{{ vault_token }}"
+    path: engineering/
+  register: vault_namespace_details
+
+- name: Use namespace metadata in a template
+  ansible.builtin.debug:
+    msg: "{{ vault_namespace_details.namespaces[0].custom_metadata }}"
 """
 
 RETURN = """
-message:
+namespaces:
   description:
-  - A demo message.
-  type: str
+    - List of namespace objects returned by C(vault_namespace_info).
+    - Without I(path), each entry includes C(path) from the keys list.
+    - With I(path), the single entry includes C(id), C(path), and C(custom_metadata).
   returned: always
-  sample: "Hello, ansible-creator"
+  type: list
+  elements: dict
+  sample:
+    - id: "gsudz"
+      path: "engineering/"
+      custom_metadata:
+        team: "platform"
+        environment: "prod"
 """
 
 import copy
@@ -47,28 +74,30 @@ import copy
 from ansible.module_utils.basic import AnsibleModule
 
 from ansible_collections.hashicorp.vault.plugins.module_utils.args_common import AUTH_ARG_SPEC
+from ansible_collections.hashicorp.vault.plugins.module_utils.vault_auth_utils import (
+    get_authenticated_client,
+)
+from ansible_collections.hashicorp.vault.plugins.module_utils.vault_exceptions import (
+    VaultApiError,
+    VaultPermissionError,
+    VaultSecretNotFoundError,
+)
 
-try:
-    from ansible_collections.hashicorp.vault.plugins.module_utils.vault_auth_utils import (
-        get_authenticated_client,
-    )
-    from ansible_collections.hashicorp.vault.plugins.module_utils.vault_client import Secrets as VaultSecret
-    from ansible_collections.hashicorp.vault.plugins.module_utils.vault_exceptions import (
-        VaultApiError,
-        VaultPermissionError,
-        VaultSecretNotFoundError,
-    )
 
-except ImportError as e:
-    VAULT_IMPORT_ERROR = str(e)
+def _normalize_namespace_path(path):
+    """Strip slashes for Vault API paths to match vault_namespace behavior."""
+    if path is None:
+        return None
+    normalized = path.strip("/")
+    return normalized or None
 
 
 def main():
-    
+
     argument_spec = copy.deepcopy(AUTH_ARG_SPEC)
     argument_spec.update(
         dict(
-            name=dict(type="str"),
+            path=dict(type="str", aliases=["namespace_path"]),
         )
     )
 
@@ -79,18 +108,26 @@ def main():
 
     # Get authenticated client
     client = get_authenticated_client(module)
-    name = module.params.get("name")
+    path = _normalize_namespace_path(module.params.get("path"))
 
     try:
-        if name:
+        if path:
+            # Read a single namespace
             data = client.namespaces.read_namespace(path)
             module.exit_json(
                 changed=False,
-                namespaces=[{"name": name}],
+                namespaces=[data],
             )
         else:
-            namespace_names = client.namespaces.list_namespaces()
-            namespaces = [{"name": namespace_name} for namespace_name in namespace_names]
+            # List all namespaces
+            # list_namespaces() returns [{"keys": [...], "key_info": {...}}]
+            list_data = client.namespaces.list_namespaces()
+            if list_data and len(list_data) > 0:
+                keys = list_data[0].get("keys", [])
+                # Return list of namespace objects with path key
+                namespaces = [{"path": key} for key in keys]
+            else:
+                namespaces = []
             module.exit_json(changed=False, namespaces=namespaces)
 
     except VaultSecretNotFoundError:
@@ -101,6 +138,7 @@ def main():
         module.fail_json(msg=f"Vault API error: {e}")
     except Exception as e:
         module.fail_json(msg=f"Operation failed: {e}")
+
 
 if __name__ == "__main__":
     main()

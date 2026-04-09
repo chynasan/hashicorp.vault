@@ -39,6 +39,14 @@
       when: not (vault_namespaces_api_heartbeat is failed)
       block:
         # -------------------------------------------------------------------------
+        # Set stable resource suffix for this test run
+        # -------------------------------------------------------------------------
+        - name: Set stable vault_resource_suffix for this test run
+          ansible.builtin.set_fact:
+            vault_resource_suffix: "{{ lookup('password', '/dev/null', chars='ascii_letters,digits', length=8) }}"
+          run_once: true
+
+        # -------------------------------------------------------------------------
         # Cleanup - Remove test namespaces if left from prior run
         # -------------------------------------------------------------------------
         - name: Remove test namespaces if left from prior run
