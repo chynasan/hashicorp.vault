@@ -56,8 +56,8 @@ RETURN = """
 namespaces:
   description:
     - List of namespace objects returned by C(vault_namespace_info).
-    - Without I(path), each entry includes C(path) from the keys list.
-    - With I(path), the single entry includes C(id), C(path), and C(custom_metadata).
+    - Without I(path), returns all namespaces with C(id), C(path), and C(custom_metadata) for each.
+    - With I(path), returns a single entry with C(id), C(path), and C(custom_metadata).
   returned: always
   type: list
   elements: dict
@@ -122,16 +122,30 @@ def main():
             # List all namespaces
             # list_namespaces() returns [{"keys": [...], "key_info": {...}}]
             list_data = client.namespaces.list_namespaces()
+            keys = []
+            key_info = {}
+            namespaces = []
             if list_data and len(list_data) > 0:
-                keys = list_data[0].get("keys", [])
-                # Return list of namespace objects with path key
-                namespaces = [{"path": key} for key in keys]
-            else:
-                namespaces = []
-            module.exit_json(changed=False, namespaces=namespaces)
+                data = list_data[0]
+                keys = data.get("keys", [])
+                key_info = data.get("key_info", {})
 
+                for key in keys:
+                    info = key_info.get(key, {})
+                    namespace = {
+                        "id": info.get("id", ""),
+                        "path": info.get("path", key),
+                        "custom_metadata": info.get("custom_metadata", {}),
+                    }
+                    namespaces.append(namespace)
+            module.exit_json(
+                changed=False,
+                keys=keys,
+                key_info=key_info,
+                namespaces=namespaces,
+            )
     except VaultSecretNotFoundError:
-        module.exit_json(changed=False, namespaces=[])
+        module.exit_json(changed=False, keys=[], key_info={}, namespaces=[])
     except VaultPermissionError as e:
         module.fail_json(msg=f"Permission denied: {e}")
     except VaultApiError as e:
