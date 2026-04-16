@@ -10,6 +10,11 @@
   ansible.builtin.set_fact:
     vault_temp_dir: "{{ vault_dir.path }}"
 
+- name: Generate custom certificate
+  generate_certificate:
+    cert_path: "{{ vault_temp_dir }}/vault.crt"
+    key_path: "{{ vault_temp_dir }}/vault.key"
+
 - name: Create container compose configuration file
   ansible.builtin.template:
       src: compose.yaml.j2
@@ -20,24 +25,6 @@
     src: vault-config.hcl
     dest: "{{ vault_temp_dir }}/vault-config.hcl"
 
-- name: Stop container via CLI and ignore "not found" errors
-  ansible.builtin.command: >-
-    {{ container_runtime }} stop {{ item }}
-  register: stop_result
-  failed_when: 
-    - stop_result.rc != 0
-    - "'No such container' not in stop_result.stderr"
-  loop: ["cert-generator", "vault-server"]
-
-- name: Remove container via CLI and ignore "not found" errors
-  ansible.builtin.command: >-
-    {{ container_runtime }} rm {{ item }}
-  register: rm_result
-  failed_when: 
-    - rm_result.rc != 0
-    - "'No such container' not in rm_result.stderr"
-  loop: ["cert-generator", "vault-server"]
-
 - name: 'Run {{ container_runtime }} compose up'
   ansible.builtin.command: >-
     {{ container_runtime }} compose up -d --remove-orphans
@@ -46,9 +33,8 @@
 
 - name: Get containers logs (debug)
   ansible.builtin.command: >-
-    {{ container_runtime }} logs {{ item }}
+    {{ container_runtime }} logs vault-server
   register: _containers_logs
-  loop: ["cert-generator", "vault-server"]
 
 - name: Display container logs
   ansible.builtin.debug:
