@@ -153,15 +153,18 @@ def main():
             # List all namespaces
             # list_namespaces() returns [{"keys": [...], "key_info": {...}}]
             list_data = client.namespaces.list_namespaces()
-            namespaces = [v for k, v in list_data[0].get("key_info", {}).items()]
+            data = list_data[0] if list_data else {}
+            key_info = data.get("key_info", {})
+            keys = data.get("keys", [])
+            namespaces = [v for k, v in key_info.items()]
             module.exit_json(
                 changed=False,
-                keys=keys,
-                key_info=key_info,
                 namespaces=namespaces,
+                key_info=key_info,
+                keys=keys,
             )
     except VaultSecretNotFoundError:
-        module.exit_json(changed=False, keys=[], key_info={}, namespaces=[])
+        module.exit_json(changed=False, namespaces=[], keys=[], key_info={})
     except VaultPermissionError as e:
         module.fail_json(msg=f"Permission denied: {e}")
     except VaultApiError as e:
